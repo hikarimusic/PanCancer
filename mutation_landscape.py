@@ -6,15 +6,17 @@ from collections import defaultdict
 import os
 
 # TCGA settings
+tcga_cancer = "Pancreatic Ductal Adenocarcinoma"
 tcga_clinical = os.path.join("data_clinical", "nationwidechildrens.org_clinical_patient_paad.txt")
 tcga_snv_dir = 'data_snv_PAAD'
-tcga_histology = 'histologic_diagnosis'
-tcga_include = ["Pancreas-Adenocarcinoma Ductal Type"]
+tcga_include = {
+    'histologic_diagnosis': ["Pancreas-Adenocarcinoma Ductal Type"],
+}
 
 # Plot settings remain the same as before
 plt.style.use('ggplot')
 plot_format = 'png'
-plot_size = (7.0, 6.0)
+plot_size = (7.0, 3.5)
 plot_dpi = 600
 plot_fontsize = 6
 gene_fontsize = 6
@@ -30,42 +32,59 @@ mutation_categories = {
     'Frame_Shift_Del': ('Frameshift', '#ff6600'),
     'Frame_Shift_Ins': ('Frameshift', '#ff6600'),
     'Nonsense_Mutation': ('Nonsense', '#cc0033'),
+    'Silent': ('Synonymous', '#d2dae2'),
 }
 
-def read_clinical_data(clinical_file, histology_col, include_histology):
-    """Read clinical data and filter based on histology."""
+def read_clinical_data(clinical_file, include_histology_dict):
+    """Read clinical data and filter based on multiple histology columns.
+    
+    Args:
+        clinical_file (str): Path to clinical data file
+        include_histology_dict (dict): Dictionary mapping histology column names to lists of included values
+    
+    Returns:
+        list: List of case IDs meeting the histology criteria
+    """
     # Read the file with the first row as header, skip the 2nd and 3rd rows
     df = pd.read_csv(clinical_file, sep='\t', skiprows=[1,2])
     
-    # Filter based on histology
-    filtered_df = df[df[histology_col].isin(include_histology)]
+    # Create mask for each histology column
+    masks = []
+    for col, values in include_histology_dict.items():
+        masks.append(df[col].isin(values))
+    
+    # Combine masks with OR operation
+    final_mask = masks[0]
+    for mask in masks[1:]:
+        final_mask = final_mask | mask
+    
+    # Filter based on combined mask
+    filtered_df = df[final_mask]
     
     # Get case IDs (first column)
     return filtered_df.iloc[:, 1].tolist()
 
+# Rest of the code remains unchanged
 def read_maf_files(directory, case_ids):
     """Read MAF files for specific cases."""
     all_mutations = []
     
-    cnt = 0
     for case_id in case_ids:
         maf_file = os.path.join(directory, f"{case_id}.maf")
-        print(maf_file)
-        cnt += 1
-
-        df = pd.read_csv(maf_file, sep='\t', comment='#')
-        required_cols = ['Hugo_Symbol', 'Variant_Classification', 'Tumor_Sample_Barcode']
-        all_mutations.append(df[required_cols])
-        # cnt += 1
-
-    print("Cnt", cnt)
+        if os.path.exists(maf_file):
+            df = pd.read_csv(maf_file, sep='\t', comment='#', low_memory=False)
+            required_cols = ['Hugo_Symbol', 'Variant_Classification', 'Tumor_Sample_Barcode']
+            all_mutations.append(df[required_cols])
+            if len(df) == 0:
+                print(f"{maf_file} is empty!")
+        else:
+            print(f"{maf_file} not found!")
     
     if not all_mutations:
         raise ValueError("No matching MAF files found for the filtered cases")
         
     return pd.concat(all_mutations, ignore_index=True)
 
-# The rest of the functions remain the same
 def create_mutation_matrix(mutations_df, top_n_genes=50):
     """Create a mutation matrix for visualization."""
     # Filter out mutations not in our categories
@@ -73,7 +92,6 @@ def create_mutation_matrix(mutations_df, top_n_genes=50):
     
     # Get total number of cases
     total_cases = len(mutations_df['Tumor_Sample_Barcode'].unique())
-    print("totalcases", total_cases)
     
     # Calculate mutation frequency per gene
     gene_freq = mutations_df.groupby('Hugo_Symbol')['Tumor_Sample_Barcode'].nunique()
@@ -90,7 +108,7 @@ def create_mutation_matrix(mutations_df, top_n_genes=50):
     mutation_types = defaultdict(dict)
     priority_order = ['Nonsense_Mutation', 'Frame_Shift_Del', 'Frame_Shift_Ins', 
                      'Splice_Site', 'Translation_Start_Site', 'Nonstop_Mutation',
-                     'In_Frame_Del', 'In_Frame_Ins', 'Missense_Mutation']
+                     'In_Frame_Del', 'In_Frame_Ins', 'Missense_Mutation', 'Silent']
     
     for gene in top_genes:
         gene_mutations = mutations_df[mutations_df['Hugo_Symbol'] == gene]
@@ -161,14 +179,15 @@ def create_mutation_landscape(mutations_df, output_file, top_n_genes=30):
         ('Inframe', '#009999'),
         ('Critical Site', '#cc9933'),
         ('Frameshift', '#ff6600'),
-        ('Nonsense', '#cc0033')
+        ('Nonsense', '#cc0033'),
+        ('Synonymous', '#d2dae2'),
     ]
     legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=color, label=label)
                       for label, color in legend_categories]
     ax.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1),
              loc='upper left', fontsize=plot_fontsize)
     
-    plt.title('Mutation Landscape', fontsize=plot_fontsize+2, pad=20)
+    plt.title(tcga_cancer, fontsize=plot_fontsize+2)
     plt.tight_layout()
     plt.savefig(output_file, format=plot_format, dpi=plot_dpi, bbox_inches='tight')
     plt.close()
@@ -176,7 +195,7 @@ def create_mutation_landscape(mutations_df, output_file, top_n_genes=30):
 def main():
     # Read and filter clinical data
     print("Reading clinical data...")
-    case_ids = read_clinical_data(tcga_clinical, tcga_histology, tcga_include)
+    case_ids = read_clinical_data(tcga_clinical, tcga_include)
     print(f"Found {len(case_ids)} cases matching histology criteria")
     
     # Read filtered MAF files
@@ -185,7 +204,7 @@ def main():
     
     # Create the plot
     print("Generating mutation landscape plot...")
-    output_file = os.path.join(tcga_snv_dir, 'mutation_landscape_filtered.png')
+    output_file = tcga_cancer.replace(' ', '_') + '.' + plot_format
     create_mutation_landscape(mutations_df, output_file, top_n_genes=30)
     print(f"Plot saved as: {output_file}")
 

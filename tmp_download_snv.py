@@ -34,7 +34,7 @@ def explore_available_files():
         "filters": json.dumps(filters),
         "fields": "file_id,file_name,data_type,data_format,experimental_strategy",
         "format": "JSON",
-        "size": "100"
+        "size": "1000"
     }
     
     # Make the API call
@@ -111,6 +111,8 @@ def download_files(file_hits, output_dir="LIHC_RNA_counts"):
         
         # Create the output filename
         output_file = os.path.join(output_dir, f"{case_id}_{file_name}")
+        if os.path.exists(output_file):
+            continue
         
         # Download the file
         print(f"Downloading {case_id}...")
